@@ -16,6 +16,12 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
+try:
+    from config import PASSO_EMAIL, PASSO_SIFRE
+except ImportError:
+    PASSO_EMAIL = None
+    PASSO_SIFRE = None
+
 # ─── AYARLAR ────────────────────────────────────────────────────────────────
 URL = "https://www.passo.com.tr/tr/kombine/galatasaray-kombine-bilet/634746/koltuk-secim"
 
@@ -174,8 +180,117 @@ def onay_dialogunu_kapat(driver):
             continue
 
 
+def giris_yap(driver):
+    """Passo.com.tr'ye otomatik giriş yapar."""
+    if not PASSO_EMAIL or not PASSO_SIFRE:
+        log.warning("config.py bulunamadı, giriş atlanıyor.")
+        return False
+
+    giris_url = "https://www.passo.com.tr/tr/giris"
+    log.info(f"Giriş sayfası açılıyor: {giris_url}")
+    driver.get(giris_url)
+
+    try:
+        WebDriverWait(driver, 15).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+    except Exception:
+        pass
+
+    time.sleep(2)  # Sayfa tam render olsun
+
+    # Email alanını doldur
+    email_selectors = [
+        "input[type='email']",
+        "input[name='email']",
+        "input[id='email']",
+        "input[placeholder*='mail']",
+        "input[placeholder*='Mail']",
+    ]
+    email_girildi = False
+    for sel in email_selectors:
+        try:
+            el = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
+            el.clear()
+            el.send_keys(PASSO_EMAIL)
+            log.info(f"Email girildi ({sel})")
+            email_girildi = True
+            break
+        except Exception:
+            continue
+
+    if not email_girildi:
+        log.error("Email alanı bulunamadı!")
+        return False
+
+    # Şifre alanını doldur
+    sifre_selectors = [
+        "input[type='password']",
+        "input[name='password']",
+        "input[id='password']",
+        "input[name='sifre']",
+    ]
+    sifre_girildi = False
+    for sel in sifre_selectors:
+        try:
+            el = driver.find_element(By.CSS_SELECTOR, sel)
+            el.clear()
+            el.send_keys(PASSO_SIFRE)
+            log.info(f"Şifre girildi ({sel})")
+            sifre_girildi = True
+            break
+        except Exception:
+            continue
+
+    if not sifre_girildi:
+        log.error("Şifre alanı bulunamadı!")
+        return False
+
+    # Giriş butonuna tıkla
+    giris_buton_selectors = [
+        "button[type='submit']",
+        "input[type='submit']",
+        "button.login-button",
+        "button.btn-login",
+        "//button[contains(text(),'Giriş')]",
+        "//button[contains(text(),'Giris')]",
+        "//input[@value='Giriş Yap']",
+    ]
+    for sel in giris_buton_selectors:
+        try:
+            by = By.XPATH if sel.startswith("//") else By.CSS_SELECTOR
+            btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((by, sel)))
+            btn.click()
+            log.info(f"Giriş butonuna tıklandı ({sel})")
+            break
+        except Exception:
+            continue
+
+    # Giriş sonrası yüklenmesini bekle
+    time.sleep(3)
+
+    # Giriş başarılı mı kontrol et
+    current_url = driver.current_url
+    if "giris" not in current_url.lower() and "login" not in current_url.lower():
+        log.info("Giriş BASARILI!")
+        return True
+    else:
+        # Hata mesajı var mı bak
+        try:
+            hata = driver.find_element(By.CSS_SELECTOR, ".error-message, .alert-danger, .login-error")
+            log.error(f"Giriş hatası: {hata.text}")
+        except Exception:
+            log.warning("Giriş durumu belirsiz, devam ediliyor...")
+        return True  # Yine de devam et
+
+
 def ana_dongu(driver):
-    log.info(f"Sayfa açılıyor: {URL}")
+    # Önce giriş yap
+    giris_basarili = giris_yap(driver)
+    if not giris_basarili:
+        log.warning("Giriş yapılamadı, sayfa yine de açılıyor...")
+
+    log.info(f"Koltuk sayfası açılıyor: {URL}")
     driver.get(URL)
 
     # Sayfanın yüklenmesi için bekle
