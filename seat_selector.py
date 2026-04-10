@@ -1,0 +1,248 @@
+"""
+Passo.com.tr - Otomatik Koltuk Seçici
+Engelli kullanıcılar için boş koltuk çıktığında otomatik seçer.
+
+Gereksinimler:
+    pip install selenium webdriver-manager
+"""
+
+import time
+import logging
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
+# ─── AYARLAR ────────────────────────────────────────────────────────────────
+URL = "https://www.passo.com.tr/tr/kombine/galatasaray-kombine-bilet/634746/koltuk-secim"
+
+# Koltuk seçim tercihler (sırayla dener, ilk uygun bulduğunu seçer)
+TERCIH_BLOK   = None   # Örnek: "K-KUZEY" — belirli bir blok istiyorsan yaz, yoksa None bırak
+TERCIH_KAT    = None   # Örnek: "1"       — belirli bir kat istiyorsan yaz, yoksa None bırak
+ENGELLI_FILTRE = True  # True: sadece engelli koltukları dene, False: herhangi boş koltuğu seç
+
+TARAMA_ARALIGI = 2     # saniye — kaç saniyede bir koltukları kontrol etsin
+MAKSIMUM_DENEME = 300  # toplam deneme sayısı (~600 saniye = 10 dakika)
+# ────────────────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
+
+# Passo'da kullanılan olası boş koltuk CSS seçicileri
+BOSH_KOLTUK_SELECTORS = [
+    # SVG tabanlı koltuk haritası
+    "g.seat.available",
+    "g.seat:not(.sold):not(.disabled):not(.reserved)",
+    "circle.seat.available",
+    "rect.seat.available",
+    # Div tabanlı koltuk haritası
+    "div.seat.available",
+    "div.seat.empty",
+    "div.seat:not(.sold):not(.disabled):not(.reserved):not(.selected)",
+    # Genel buton/link tabanlı
+    "button.seat:not([disabled])",
+    "a.seat.available",
+    # Engelli koltukları
+    "g.seat.handicapped:not(.sold)",
+    "div.seat.handicapped:not(.sold)",
+    "div.seat.wheelchair:not(.sold)",
+]
+
+# Engelli'ye özel ek filtre kelimeleri (element class/title/aria içinde arar)
+ENGELLI_ANAHTAR_KELIMELER = [
+    "handicap", "engelli", "wheelchair", "disabled-seat", "accessible"
+]
+
+
+def tarayici_baslat() -> webdriver.Chrome:
+    options = Options()
+    # Görünür tarayıcı açar (arkadaşın bilgi girişi için gerekli)
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    driver.execute_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    )
+    return driver
+
+
+def engelli_mi(element) -> bool:
+    """Elementin engelli/erişilebilir koltuk olup olmadığını kontrol eder."""
+    try:
+        class_attr = (element.get_attribute("class") or "").lower()
+        title_attr = (element.get_attribute("title") or "").lower()
+        aria_label = (element.get_attribute("aria-label") or "").lower()
+        combined   = class_attr + title_attr + aria_label
+        return any(k in combined for k in ENGELLI_ANAHTAR_KELIMELER)
+    except Exception:
+        return False
+
+
+def blok_uygun_mu(element) -> bool:
+    """Tercih edilen blok/kat filtresi."""
+    if not TERCIH_BLOK and not TERCIH_KAT:
+        return True
+    try:
+        parent_text = element.find_element(By.XPATH, "./ancestor::*[@data-block or @data-section][1]")
+        data_block  = (parent_text.get_attribute("data-block") or "").upper()
+        data_kat    = (parent_text.get_attribute("data-floor") or "")
+        if TERCIH_BLOK and TERCIH_BLOK.upper() not in data_block:
+            return False
+        if TERCIH_KAT and TERCIH_KAT not in data_kat:
+            return False
+    except Exception:
+        pass  # Blok bilgisi bulunamazsa geçir
+    return True
+
+
+def bosh_koltuk_bul(driver) -> list:
+    """Sayfadaki boş koltukları döndürür."""
+    koltuklar = []
+    for selector in BOSH_KOLTUK_SELECTORS:
+        try:
+            elemanlar = driver.find_elements(By.CSS_SELECTOR, selector)
+            for el in elemanlar:
+                if not el.is_displayed():
+                    continue
+                if ENGELLI_FILTRE and not engelli_mi(el):
+                    continue
+                if not blok_uygun_mu(el):
+                    continue
+                koltuklar.append(el)
+            if koltuklar:
+                log.info(f"Koltuk bulundu — selector: '{selector}', adet: {len(koltuklar)}")
+                break
+        except Exception:
+            continue
+    return koltuklar
+
+
+def koltuğu_sec(driver, koltuk) -> bool:
+    """Koltuğa tıklar; başarılı ise True döner."""
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", koltuk)
+        time.sleep(0.3)
+        koltuk.click()
+        log.info("Koltuğa tıklandı!")
+        return True
+    except Exception as e:
+        log.warning(f"Tıklama hatası: {e}")
+        try:
+            driver.execute_script("arguments[0].click();", koltuk)
+            log.info("JavaScript ile tıklandı!")
+            return True
+        except Exception as e2:
+            log.error(f"JS tıklama da başarısız: {e2}")
+            return False
+
+
+def onay_dialogunu_kapat(driver):
+    """Passo'nun koltuk onay popup'ını otomatik kabul eder."""
+    onay_selectors = [
+        "button.confirm-button",
+        "button.btn-primary",
+        "button[data-action='confirm']",
+        "//button[contains(text(),'Onayla')]",
+        "//button[contains(text(),'Seç')]",
+        "//button[contains(text(),'Devam')]",
+    ]
+    for sel in onay_selectors:
+        try:
+            by = By.XPATH if sel.startswith("//") else By.CSS_SELECTOR
+            btn = WebDriverWait(driver, 2).until(EC.element_to_be_clickable((by, sel)))
+            btn.click()
+            log.info(f"Onay dialogu kapatıldı: {sel}")
+            return
+        except Exception:
+            continue
+
+
+def ana_dongu(driver):
+    log.info(f"Sayfa açılıyor: {URL}")
+    driver.get(URL)
+
+    # Sayfanın yüklenmesi için bekle
+    try:
+        WebDriverWait(driver, 20).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+    except Exception:
+        pass
+
+    log.info("Sayfa yüklendi. Boş koltuk taranıyor...")
+    log.info(
+        f"Ayarlar — Engelli filtresi: {ENGELLI_FILTRE} | "
+        f"Blok: {TERCIH_BLOK or 'Herhangi'} | "
+        f"Kat: {TERCIH_KAT or 'Herhangi'}"
+    )
+    print("\n" + "="*60)
+    print("  TARAMA BASLIYOR — tarayiciyi kapatma!")
+    print("  Bos koltuk cikinca otomatik secilecek.")
+    print("  Koltuk sectikten sonra bilgilerini girebilirsin.")
+    print("="*60 + "\n")
+
+    secildi = False
+    for deneme in range(1, MAKSIMUM_DENEME + 1):
+        log.info(f"Deneme {deneme}/{MAKSIMUM_DENEME} — koltuk aranıyor...")
+
+        # Sayfayı yenile (bazı ticketing siteleri WebSocket yerine yenileme ister)
+        if deneme > 1 and deneme % 30 == 0:
+            log.info("Sayfa yenileniyor...")
+            driver.refresh()
+            time.sleep(3)
+
+        koltuklar = bosh_koltuk_bul(driver)
+
+        if koltuklar:
+            koltuk = koltuklar[0]
+            log.info(f"BULDUK! Toplam {len(koltuklar)} bos koltuk var. Ilki seciliyor...")
+            basarili = koltuğu_sec(driver, koltuk)
+
+            if basarili:
+                time.sleep(1)
+                onay_dialogunu_kapat(driver)
+                secildi = True
+                print("\n" + "="*60)
+                print("  KOLTUK SECILDI!")
+                print("  Simdi bilgilerini girebilirsin.")
+                print("="*60 + "\n")
+                break
+            else:
+                log.warning("Tıklama basarisiz, tekrar deneniyor...")
+
+        time.sleep(TARAMA_ARALIGI)
+
+    if not secildi:
+        log.warning("Süre doldu, boş koltuk bulunamadı.")
+        print("\nBos koltuk bulunamadi. Sayfayi yenileyip tekrar calistirabilirsin.")
+
+
+def main():
+    driver = tarayici_baslat()
+    try:
+        ana_dongu(driver)
+        # Koltuk seçildikten sonra tarayıcıyı açık tut
+        input("\nBilgilerini girdikten sonra ENTER'a bas ve tarayiciyi kapat...\n")
+    finally:
+        driver.quit()
+
+
+if __name__ == "__main__":
+    main()
