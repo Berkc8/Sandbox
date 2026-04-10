@@ -69,7 +69,7 @@ def tarayici_baslat() -> uc.Chrome:
     options = uc.ChromeOptions()
     options.add_argument("--start-maximized")
     options.add_argument("--lang=tr-TR")
-    driver = uc.Chrome(options=options, use_subprocess=True)
+    driver = uc.Chrome(options=options, use_subprocess=True, version_main=146)
     return driver
 
 
