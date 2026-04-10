@@ -8,13 +8,10 @@ Gereksinimler:
 
 import time
 import logging
-from selenium import webdriver
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 
 try:
     from config import PASSO_EMAIL, PASSO_SIFRE
@@ -68,24 +65,11 @@ ENGELLI_ANAHTAR_KELIMELER = [
 ]
 
 
-def tarayici_baslat() -> webdriver.Chrome:
-    options = Options()
-    # Görünür tarayıcı açar (arkadaşın bilgi girişi için gerekli)
+def tarayici_baslat() -> uc.Chrome:
+    options = uc.ChromeOptions()
     options.add_argument("--start-maximized")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    )
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.execute_script(
-        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    )
+    options.add_argument("--lang=tr-TR")
+    driver = uc.Chrome(options=options, use_subprocess=True)
     return driver
 
 
