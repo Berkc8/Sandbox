@@ -180,6 +180,23 @@ def onay_dialogunu_kapat(driver):
             continue
 
 
+def cloudflare_bekle(driver, max_sure=60):
+    """Cloudflare engeli varsa kullanıcının manuel geçmesini bekler."""
+    for _ in range(max_sure):
+        title = driver.title.lower()
+        if "attention required" in title or "just a moment" in title or "cloudflare" in title:
+            time.sleep(1)
+        else:
+            return  # Cloudflare geçildi
+    # Hala engelliyse kullanıcıya sor
+    print("\n" + "="*60)
+    print("  CLOUDFLARE DOGRULAMA GEREKIYOR!")
+    print("  Acilan tarayicida 'I am human' kutusuna tikla.")
+    print("  Tiklayinca bu ekrana don ve ENTER'a bas.")
+    print("="*60)
+    input()
+
+
 def giris_yap(driver):
     """Passo.com.tr'ye otomatik giriş yapar."""
     if not PASSO_EMAIL or not PASSO_SIFRE:
@@ -196,6 +213,9 @@ def giris_yap(driver):
         )
     except Exception:
         pass
+
+    # Cloudflare varsa kullanıcı manuel geçsin
+    cloudflare_bekle(driver)
 
     time.sleep(2)  # Sayfa tam render olsun
 
@@ -300,6 +320,9 @@ def ana_dongu(driver):
         )
     except Exception:
         pass
+
+    # Koltuk sayfasında da Cloudflare olabilir
+    cloudflare_bekle(driver)
 
     log.info("Sayfa yüklendi. Boş koltuk taranıyor...")
     log.info(
